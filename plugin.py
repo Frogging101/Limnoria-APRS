@@ -35,6 +35,7 @@ import supybot.ircutils as ircutils
 import supybot.callbacks as callbacks
 import supybot.ircmsgs as ircmsgs
 import supybot.log as log
+import supybot.world as world
 
 import threading
 import re
@@ -68,7 +69,6 @@ class APRS(callbacks.Plugin):
         self.outboxMutex = threading.Lock()
         self.outbox = []
         self.run = True
-        self.irc = irc
         self.thread = threading.Thread(target=self.APRSThread)
         self.thread.start()
         #self.APRSThread()
@@ -100,7 +100,6 @@ class APRS(callbacks.Plugin):
             if data[-1] == '\n':
                 break
         lines = data.split('\r\n')
-        log.info(data)
         msgPattern = re.compile("^(.*?)>.*?::([A-Za-z0-9-]*).*?:(.*?)$",re.M)
         idPattern = re.compile("^(.*){(.*)$",re.M)
         for line in lines:
@@ -148,7 +147,10 @@ class APRS(callbacks.Plugin):
                     destChan = match.group(1)
                     message = match.group(2)
                     s += message
-                    self.irc.reply(s,to=destChan)
+                    privmsg = ircmsgs.privmsg(destChan,s)
+                    for irc in world.ircs:
+                        if destChan in irc.state.channels:
+                            irc.queueMsg(privmsg)
 
         """self.outboxMutex.acquire()
         outbox = self.outbox
