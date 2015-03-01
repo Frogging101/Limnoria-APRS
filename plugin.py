@@ -47,6 +47,7 @@ import traceback
 APRS_SERVER = "noam.aprs2.net"
 APRS_PORT = 14580
 CALLSIGN = "VE3HCF-10"
+acknowledge = True
 
 try:
     from supybot.i18n import PluginInternationalization
@@ -65,12 +66,12 @@ class APRS(callbacks.Plugin):
         self.__parent = super(APRS, self)
         self.__parent.__init__(irc)
         self.broken = False
-        self.sockMutex = threading.Lock()
         self.outboxMutex = threading.Lock()
         self.outbox = []
         self.run = True
         self.thread = threading.Thread(target=self.APRSThread)
         self.thread.start()
+        self.received = set()
         #self.APRSThread()
 
     def die(self):
@@ -84,11 +85,8 @@ class APRS(callbacks.Plugin):
         packets = []
         while True:
             try:
-                self.sockMutex.acquire()
                 recv = self.sock.recv(1024)
-                self.sockMutex.release()
             except TimeoutError:
-                self.sockMutex.release()
                 self.broken = True
                 log.error("timed out")
                 data += recv
@@ -122,7 +120,6 @@ class APRS(callbacks.Plugin):
         return packets
 
     def tryConnect(self):
-        self.sockMutex.acquire()
         self.sock = socket.socket()
         self.sock.settimeout(60)
         log.info("making sock")
@@ -132,24 +129,34 @@ class APRS(callbacks.Plugin):
             except TimeoutError:
                 continue
             break
-        self.sock.send("user VE3HCF-10 pass -1 filter r/45.396537/-75.731115/20\n")
-        self.sockMutex.release()
+        self.sock.send("user VE3HCF-10 pass 21929 filter r/45.396537/-75.731115/20\n")
         log.info("sock made")
 
+    def sendPacket(self,dest,content):
+        padding = ''.join([' ' for x in range(9-len(dest))])
+        s = CALLSIGN+">APRS,TCPIP*:"
+        s += ":"+dest+padding+":"+content
+        s += '\n'
+        self.sock.send(s)
+
     def processPackets(self,inbox):
-        ircMatch = re.compile("^!IRC\s+(.*?)\s+(.*)$",re.M|re.I)
+        commandMatch = re.compile("^!IRC\s+(.*?)\s+(.*)$",re.M|re.I)
+        ircMatch = re.compile("^!IRC.*")
         for packet in inbox:
             if packet.dest == CALLSIGN:
-                match = ircMatch.match(packet.content)
-                if match:
-                    s = "\x0307[APRS]\x03 "
-                    s += packet.source+": "
-                    destChan = match.group(1)
-                    message = match.group(2)
-                    s += message
-                    privmsg = ircmsgs.privmsg(destChan,s)
-                    for irc in world.ircs:
-                        if destChan in irc.state.channels:
+                if ircMatch.match(packet.content):
+                    if packet.ident:
+                        self.sendPacket(packet.source,"ack"+packet.ident)
+                    match = commandMatch.match(packet.content)
+                    if match and packet not in self.received:
+                        self.received.add(packet)
+                        s = "\x0307[APRS]\x03 "
+                        s += packet.source+": "
+                        destChan = match.group(1)
+                        message = match.group(2)
+                        s += message
+                        privmsg = ircmsgs.privmsg(destChan,s)
+                        for irc in world.ircs:
                             irc.queueMsg(privmsg)
 
         """self.outboxMutex.acquire()
@@ -166,13 +173,9 @@ class APRS(callbacks.Plugin):
                 self.processPackets(packets)        
                 if self.broken:
                     log.error("it broke")
-                    self.sockMutex.acquire()
                     self.sock.close()
-                    self.sockMutex.release()
                     self.tryConnect()
-            self.sockMutex.acquire()
             self.sock.close()
-            self.sockMutex.release()
         except:
             ex_type,ex,tb = sys.exc_info()
             log.info("".join(traceback.format_tb(tb)))
