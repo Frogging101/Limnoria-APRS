@@ -76,16 +76,22 @@ class APRS(callbacks.Plugin):
         data = ''
         packets = []
         while True:
-            self.sockMutex.acquire()
-            recv = self.sock.recv(1024)
-            self.sockMutex.release()
+            try:
+                self.sockMutex.acquire()
+                recv = self.sock.recv(1024)
+                self.sockMutex.release()
+            except TimeoutError:
+                self.sockMutex.release()
+                self.broken = True
+                log.error("timed out")
+                data += recv
+                break
             data += recv
             if not recv:
                 self.broken = True
                 break
             if data[-1] == '\n':
                 break
-        log.info(data)
         lines = data.split('\r\n')
         msgPattern = re.compile("^(.*?)>.*?::([A-Za-z0-9-]*).*?:(.*?)$",re.M)
         idPattern = re.compile("^(.*){(.*)$",re.M)
@@ -106,7 +112,6 @@ class APRS(callbacks.Plugin):
                 ident = ''
             newPacket = APRSMessage.APRSMessage(msgMatch.group(1),msgMatch.group(2),content,ident)
             packets.append(newPacket)
-            log.info("append")
         return packets
 
     def tryConnect(self):
@@ -126,7 +131,6 @@ class APRS(callbacks.Plugin):
 
     def processPackets(self,inbox):
         for packet in inbox:
-            log.info("packet from "+packet.source+" to "+packet.dest+" containing "+packet.content)
             if packet.dest == CALLSIGN:
                 s = "\x0307[APRS]\x03 "
                 s += packet.source+":"
@@ -144,9 +148,7 @@ class APRS(callbacks.Plugin):
             self.tryConnect()
             while self.run:
                 packets = self.getPackets()
-                log.info("got packets")
                 self.processPackets(packets)        
-                log.info("run")
                 if self.broken:
                     log.error("it broke")
                     self.sock.close()
