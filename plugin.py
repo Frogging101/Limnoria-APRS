@@ -72,6 +72,13 @@ class APRS(callbacks.Plugin):
         self.thread = threading.Thread(target=self.APRSThread)
         self.thread.start()
         #self.APRSThread()
+
+    def die(self):
+        self.__parent.die()
+        self.run = False
+        self.thread.join()
+        log.info("APRS Thread Joined")
+
     def getPackets(self):
         data = ''
         packets = []
@@ -93,6 +100,7 @@ class APRS(callbacks.Plugin):
             if data[-1] == '\n':
                 break
         lines = data.split('\r\n')
+        log.info(data)
         msgPattern = re.compile("^(.*?)>.*?::([A-Za-z0-9-]*).*?:(.*?)$",re.M)
         idPattern = re.compile("^(.*){(.*)$",re.M)
         for line in lines:
@@ -130,12 +138,17 @@ class APRS(callbacks.Plugin):
         log.info("sock made")
 
     def processPackets(self,inbox):
+        ircMatch = re.compile("^!IRC\s+(.*?)\s+(.*)$",re.M|re.I)
         for packet in inbox:
             if packet.dest == CALLSIGN:
-                s = "\x0307[APRS]\x03 "
-                s += packet.source+":"
-                s += packet.content
-                self.irc.reply(s,to="#fastquake-test")
+                match = ircMatch.match(packet.content)
+                if match:
+                    s = "\x0307[APRS]\x03 "
+                    s += packet.source+": "
+                    destChan = match.group(1)
+                    message = match.group(2)
+                    s += message
+                    self.irc.reply(s,to=destChan)
 
         """self.outboxMutex.acquire()
         outbox = self.outbox
@@ -151,8 +164,13 @@ class APRS(callbacks.Plugin):
                 self.processPackets(packets)        
                 if self.broken:
                     log.error("it broke")
+                    self.sockMutex.acquire()
                     self.sock.close()
+                    self.sockMutex.release()
                     self.tryConnect()
+            self.sockMutex.acquire()
+            self.sock.close()
+            self.sockMutex.release()
         except:
             ex_type,ex,tb = sys.exc_info()
             log.info("".join(traceback.format_tb(tb)))
