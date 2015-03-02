@@ -43,6 +43,7 @@ import APRSMessage
 import socket
 import sys
 import traceback
+import datetime
 
 APRS_SERVER = "noam.aprs2.net"
 APRS_PORT = 14580
@@ -71,7 +72,7 @@ class APRS(callbacks.Plugin):
         self.run = True
         self.thread = threading.Thread(target=self.APRSThread)
         self.thread.start()
-        self.received = set()
+        self.received = dict()
         #self.APRSThread()
 
     def die(self):
@@ -127,6 +128,9 @@ class APRS(callbacks.Plugin):
             try:
                 self.sock.connect(socket.getaddrinfo(APRS_SERVER,APRS_PORT,socket.AF_INET)[0][4])
             except TimeoutError:
+                self.sock.close()
+                self.sock = socket.socket()
+                self.sock.settimeout(60)
                 continue
             break
         self.sock.send("user VE3HCF-10 pass 21929 filter r/45.396537/-75.731115/20\n")
@@ -148,8 +152,8 @@ class APRS(callbacks.Plugin):
                     if packet.ident:
                         self.sendPacket(packet.source,"ack"+packet.ident)
                     match = commandMatch.match(packet.content)
-                    if match and packet not in self.received:
-                        self.received.add(packet)
+                    if match and packet not in self.received.keys():
+                        self.received[packet] = packet.timestamp
                         s = "\x0307[APRS]\x03 "
                         s += packet.source+": "
                         destChan = match.group(1)
@@ -158,19 +162,30 @@ class APRS(callbacks.Plugin):
                         privmsg = ircmsgs.privmsg(destChan,s)
                         for irc in world.ircs:
                             irc.queueMsg(privmsg)
+                    elif packet in self.received.keys():
+                        log.info("[APRS] Ignoring retransmitted packet")
 
         """self.outboxMutex.acquire()
         outbox = self.outbox
         self.outbox = []
         self.outboxMutex.release()"""
-        
+
+    def clearOldPackets(self):
+        cleared = 0
+        for packet,time in self.received.iteritems():
+            if (datetime.datetime.now()-time).seconds >= 300:
+                cleared += 1
+                del self.received[packet]
+        if cleared > 0:
+            log.info("[APRS] Cleared "+str(cleared)+" old packets.")
 
     def APRSThread(self):
         try:
             self.tryConnect()
             while self.run:
                 packets = self.getPackets()
-                self.processPackets(packets)        
+                self.processPackets(packets)
+                self.clearOldPackets()
                 if self.broken:
                     log.error("it broke")
                     self.sock.close()
