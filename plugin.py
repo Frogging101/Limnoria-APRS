@@ -174,7 +174,7 @@ class APRS(callbacks.Plugin):
         cleared = 0
         toDelete = []
         for packet,time in self.received.iteritems():
-            if (datetime.datetime.now()-time).seconds >= 300:
+            if (datetime.datetime.now()-time).seconds >= 3600:
                 toDelete.append(packet)
         for packet in toDelete:
             del self.received[packet]
