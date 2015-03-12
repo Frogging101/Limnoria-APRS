@@ -172,10 +172,13 @@ class APRS(callbacks.Plugin):
 
     def clearOldPackets(self):
         cleared = 0
+        toDelete = []
         for packet,time in self.received.iteritems():
             if (datetime.datetime.now()-time).seconds >= 300:
-                cleared += 1
-                del self.received[packet]
+                toDelete.append(packet)
+        for packet in toDelete:
+            del self.received[packet]
+            cleared += 1
         if cleared > 0:
             log.info("[APRS] Cleared "+str(cleared)+" old packets.")
 
